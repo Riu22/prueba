@@ -1,17 +1,24 @@
 const CACHE = 'auditor-v1';
-const ASSETS = [
-  '/',
-  '/index.html',
-  'https://cdn.tailwindcss.com'
-];
+const ASSETS = ['/', '/index.html'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  e.waitUntil(
+    caches.open(CACHE).then(c => c.addAll(ASSETS))
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(clients.claim());
 });
 
 self.addEventListener('fetch', e => {
-  // Las llamadas a la API nunca se cachean
-  if (e.request.url.includes('/api/')) return;
+  const url = e.request.url;
+
+  // No interceptar: API, recursos externos (CDNs), o peticiones no-GET
+  if (e.request.method !== 'GET') return;
+  if (url.includes('/api/')) return;
+  if (!url.includes(location.hostname)) return; // 👈 clave para el error CORS
 
   e.respondWith(
     caches.match(e.request)
