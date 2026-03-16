@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auditor de Facturas | Electromat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1e293b">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Auditor">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <style>
+        .drop-zone { border: 2px dashed #cbd5e1; transition: all 0.3s; }
+        .drop-zone.dragover { border-color: #3b82f6; background-color: #eff6ff; }
+        .status-badge { padding: 2px 8px; border-radius: 9999px; font-size: 0.75rem; font-weight: bold; }
+        .bg-sobrecoste { background-color: #fee2e2; color: #991b1b; }
+        .bg-ok { background-color: #dcfce7; color: #166534; }
+        .bg-ahorro { background-color: #fef9c3; color: #854d0e; }
+        .bg-nolista { background-color: #f1f5f9; color: #475569; }
+
+        /* Cabeceras de sección en la tabla */
+        .section-header td {
+            font-size: 0.7rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 6px 12px;
+            border-top: 2px solid;
+        }
+        .section-sobrecoste td { background-color: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+        .section-correcto   td { background-color: #f0fdf4; color: #15803d; border-color: #86efac; }
+        .section-ahorro     td { background-color: #fefce8; color: #a16207; border-color: #fde047; }
+        .section-nolista    td { background-color: #f8fafc; color: #475569; border-color: #cbd5e1; }
+
+        .filename-badge {
+            display: inline-block;
+            max-width: 140px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            background: #f1f5f9;
+            color: #64748b;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            padding: 1px 5px;
+            border: 1px solid #e2e8f0;
+            vertical-align: middle;
+            cursor: default;
+        }
+
+        @media print { .no-print { display: none; } }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans text-slate-900">
+
+    <div class="max-w-7xl mx-auto py-10 px-4">
+        <header class="mb-10 flex justify-between items-center no-print">
+            <div>
+                <h1 class="text-3xl font-bold text-slate-800">Auditoría de Facturas</h1>
+                <p class="text-slate-500">Compara precios de facturas contra el presupuesto pactado</p>
+            </div>
+            <div id="presupuestoStatus" class="hidden items-center bg-green-100 text-green-700 px-4 py-2 rounded-lg border border-green-200">
+                <span class="mr-2 text-xs">●</span> Presupuesto en Memoria
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-8">
+
+            <!-- Controles -->
+            <div class="space-y-6 no-print">
+
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <span class="bg-slate-100 p-2 rounded mr-2">📋</span> 1. Presupuesto
+                    </h2>
+                    <input type="file" id="presupuestoInput" class="hidden" accept=".pdf">
+                    <button id="btnPresupuesto" onclick="document.getElementById('presupuestoInput').click()"
+                        class="w-full py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700 transition flex justify-center items-center">
+                        <span>Cargar Presupuesto PDF</span>
+                    </button>
+                    <p id="presupuestoFileName" class="text-xs text-slate-400 mt-2 truncate italic text-center"></p>
+                </div>
+
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <span class="bg-blue-100 p-2 rounded mr-2">📑</span> 2. Facturas
+                    </h2>
+                    <div id="dropZone" class="drop-zone p-6 rounded-lg text-center cursor-pointer mb-4 hover:bg-slate-50">
+                        <div id="dropZoneContent">
+                            <p class="text-blue-600 font-medium">Arrastra tus facturas aquí</p>
+                            <p class="text-xs text-slate-400 mt-1">Soporta múltiples PDFs</p>
+                        </div>
+                        <div id="fileList" class="hidden mt-3 text-left space-y-1 max-h-40 overflow-y-auto"></div>
+                    </div>
+                    <input type="file" id="facturasInput" class="hidden" multiple accept=".pdf">
+                    <button id="btnAuditar" disabled
+                        class="w-full py-3 bg-blue-600 text-white rounded-lg font-bold opacity-50 cursor-not-allowed transition hover:bg-blue-700 flex justify-center items-center">
+                        <span id="btnText">Ejecutar Auditoría</span>
+                    </button>
+                    <p id="errorMsg" class="text-xs text-red-500 mt-2 hidden text-center font-semibold bg-red-50 p-2 rounded"></p>
+                </div>
+
+                <div id="resumenBox" class="hidden bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-semibold mb-4 flex items-center">
+                        <span class="bg-yellow-100 p-2 rounded mr-2">📊</span> Resumen
+                    </h2>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-slate-500">Total líneas</span>
+                            <span id="resTotal" class="font-bold">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-green-600">🟢 Correctos</span>
+                            <span id="resCorrectos" class="font-bold text-green-600">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-red-600">🔴 Sobrecostes</span>
+                            <span id="resSobrecostes" class="font-bold text-red-600">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-yellow-600">🟡 Ahorros</span>
+                            <span id="resAhorros" class="font-bold text-yellow-600">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-slate-500">⚪ No en presupuesto</span>
+                            <span id="resNoLista" class="font-bold text-slate-500">0</span>
+                        </div>
+                        <div class="border-t pt-2 mt-2 flex justify-between">
+                            <span class="text-red-500">Sobrecoste acumulado</span>
+                            <span id="resDifTotal" class="font-bold text-red-500">+0,000€</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-yellow-600">Ahorro acumulado</span>
+                            <span id="resAhorroTotal" class="font-bold text-yellow-600">-0,000€</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Resultados -->
+            <div class="md:col-span-3">
+                <div id="filtrosBox" class="hidden no-print mb-3 flex flex-wrap gap-2">
+                    <button onclick="filtrar('todos', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-white">Todos</button>
+                    <button onclick="filtrar('SOBRECOSTE', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700 hover:bg-red-200">🔴 Sobrecostes</button>
+                    <button onclick="filtrar('CORRECTO', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 hover:bg-green-200">🟢 Correctos</button>
+                    <button onclick="filtrar('AHORRO', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700 hover:bg-yellow-200">🟡 Ahorros</button>
+                    <button onclick="filtrar('NO EN', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200">⚪ No en presupuesto</button>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 no-print">
+                        <h2 class="font-bold">Resultados del Análisis</h2>
+                        <div class="space-x-2">
+                            <button onclick="clearResults()" class="text-xs text-slate-500 hover:text-red-500">Limpiar</button>
+                            <button onclick="window.print()" class="text-sm text-blue-600 font-semibold hover:underline">Imprimir PDF</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead class="bg-slate-100 sticky top-0 border-b z-10">
+                                <tr>
+                                    <th class="p-3 font-semibold text-slate-600 whitespace-nowrap">Estado</th>
+                                    <th class="p-3 font-semibold text-slate-600 whitespace-nowrap">Referencia</th>
+                                    <th class="p-3 font-semibold text-slate-600">Descripción</th>
+                                    <th class="p-3 font-semibold text-slate-600 whitespace-nowrap">Archivo</th>
+                                    <th class="p-3 font-semibold text-slate-600 text-right whitespace-nowrap">P. Factura</th>
+                                    <th class="p-3 font-semibold text-slate-600 text-right whitespace-nowrap">P. Presupuesto</th>
+                                    <th class="p-3 font-semibold text-slate-600 text-right whitespace-nowrap">Diferencia</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsTable">
+                                <tr>
+                                    <td colspan="7" class="p-10 text-center text-slate-400 italic">
+                                        No hay resultados. Carga el presupuesto y las facturas para comenzar.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function fmt(n) {
+            if (n === null || n === undefined) return '—';
+            return n.toFixed(3).replace('.', ',');
+        }
+
+        const API_BASE = "http://localhost:8080/api/v1/auditor";
+        let presupuestoCargado = false;
+        let todosLosDatos = [];
+
+        // --- PRESUPUESTO ---
+        document.getElementById('presupuestoInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const btnPresupuesto = document.getElementById('btnPresupuesto');
+            document.getElementById('presupuestoFileName').textContent = file.name;
+            btnPresupuesto.innerHTML = '<span>Cargando...</span>';
+            btnPresupuesto.disabled = true;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_BASE}/cargar-presupuesto`, { method: 'POST', body: formData });
+                if (response.ok) {
+                    presupuestoCargado = true;
+                    document.getElementById('presupuestoStatus').classList.remove('hidden');
+                    document.getElementById('presupuestoStatus').classList.add('flex');
+                    btnPresupuesto.innerHTML = '<span>Presupuesto Cargado ✅</span>';
+                    btnPresupuesto.classList.replace('bg-slate-800', 'bg-green-600');
+                    checkReadyStatus();
+                } else {
+                    throw new Error(await response.text());
+                }
+            } catch (err) {
+                alert("Error al cargar el presupuesto: " + err.message);
+                btnPresupuesto.innerHTML = '<span>Cargar Presupuesto PDF</span>';
+                btnPresupuesto.disabled = false;
+            }
+        });
+
+        // --- FACTURAS ---
+        const facturasInput   = document.getElementById('facturasInput');
+        const dropZone        = document.getElementById('dropZone');
+        const fileList        = document.getElementById('fileList');
+        const dropZoneContent = document.getElementById('dropZoneContent');
+
+        dropZone.onclick = () => facturasInput.click();
+        dropZone.addEventListener('dragover',  (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            facturasInput.files = e.dataTransfer.files;
+            handleFileSelection();
+        });
+        facturasInput.addEventListener('change', handleFileSelection);
+
+        function handleFileSelection() {
+            const files = facturasInput.files;
+            if (files.length > 0) {
+                dropZoneContent.classList.add('hidden');
+                fileList.classList.remove('hidden');
+                fileList.innerHTML = `<p class="text-xs font-bold text-slate-500 mb-1">Archivos (${files.length}):</p>`;
+                Array.from(files).forEach(f => {
+                    const item = document.createElement('div');
+                    item.className = "text-[10px] text-slate-600 truncate bg-slate-100 p-1 rounded border";
+                    item.textContent = `📄 ${f.name}`;
+                    fileList.appendChild(item);
+                });
+                checkReadyStatus();
+            }
+        }
+
+        function checkReadyStatus() {
+            if (presupuestoCargado && facturasInput.files.length > 0) {
+                const btn = document.getElementById('btnAuditar');
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        // --- AUDITAR ---
+        document.getElementById('btnAuditar').onclick = async () => {
+            const files = facturasInput.files;
+            const formData = new FormData();
+            for (let i = 0; i < files.length; i++) formData.append('files', files[i]);
+
+            const btnText    = document.getElementById('btnText');
+            const btnAuditar = document.getElementById('btnAuditar');
+            const errorMsg   = document.getElementById('errorMsg');
+
+            btnText.innerText = "Auditando...";
+            btnAuditar.disabled = true;
+            errorMsg.classList.add('hidden');
+
+            try {
+                const response = await fetch(`${API_BASE}/auditar-facturas`, { method: 'POST', body: formData });
+                if (!response.ok) throw new Error("Error en servidor");
+                const data = await response.json();
+                todosLosDatos = data;
+                renderResults(data);
+                renderResumen(data);
+                document.getElementById('filtrosBox').classList.remove('hidden');
+            } catch (err) {
+                errorMsg.textContent = "Error: El servidor no devolvió datos válidos.";
+                errorMsg.classList.remove('hidden');
+            } finally {
+                btnText.innerText = "Ejecutar Auditoría";
+                btnAuditar.disabled = false;
+            }
+        };
+
+        // --- FILTROS ---
+        function filtrar(tipo, event) {
+            document.querySelectorAll('.filtro-btn').forEach(b => b.classList.remove('bg-slate-800', 'text-white'));
+            event.target.classList.add('bg-slate-800', 'text-white');
+            const filtrado = tipo === 'todos'
+                ? todosLosDatos
+                : todosLosDatos.filter(i => i.estado && i.estado.includes(tipo));
+            renderResults(filtrado);
+        }
+
+        // --- RESUMEN ---
+        function renderResumen(data) {
+            document.getElementById('resumenBox').classList.remove('hidden');
+            document.getElementById('resTotal').textContent       = data.length;
+            document.getElementById('resCorrectos').textContent   = data.filter(i => i.estado.includes('CORRECTO')).length;
+            document.getElementById('resSobrecostes').textContent = data.filter(i => i.estado.includes('SOBRECOSTE')).length;
+            document.getElementById('resAhorros').textContent     = data.filter(i => i.estado.includes('AHORRO')).length;
+            document.getElementById('resNoLista').textContent     = data.filter(i => i.estado.includes('NO EN')).length;
+
+            const difTotal = data
+                .filter(i => i.estado.includes('SOBRECOSTE'))
+                .reduce((s, i) => s + (Number(i.diferencia) || 0), 0);
+            document.getElementById('resDifTotal').textContent = '+' + fmt(difTotal) + '€';
+
+            const ahorroTotal = data
+                .filter(i => i.estado.includes('AHORRO'))
+                .reduce((s, i) => s + (Number(i.diferencia) || 0), 0);
+            document.getElementById('resAhorroTotal').textContent = fmt(ahorroTotal) + '€';
+        }
+
+        // --- TABLA AGRUPADA ---
+        function renderResults(data) {
+            const tbody = document.getElementById('resultsTable');
+            tbody.innerHTML = '';
+
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="p-10 text-center text-slate-400 italic">No se encontraron resultados.</td></tr>';
+                return;
+            }
+
+            // Orden de secciones y su configuración visual
+            const secciones = [
+                { clave: 'SOBRECOSTE', label: '🔴 Sobrecostes',        claseHeader: 'section-sobrecoste', claseBadge: 'bg-sobrecoste' },
+                { clave: 'CORRECTO',   label: '🟢 Correctos',          claseHeader: 'section-correcto',   claseBadge: 'bg-ok'         },
+                { clave: 'AHORRO',     label: '🟡 Ahorros',            claseHeader: 'section-ahorro',     claseBadge: 'bg-ahorro'     },
+                { clave: 'NO EN',      label: '⚪ No en presupuesto',  claseHeader: 'section-nolista',    claseBadge: 'bg-nolista'    },
+            ];
+
+            secciones.forEach(({ clave, label, claseHeader, claseBadge }) => {
+                const items = data.filter(i => i.estado && i.estado.includes(clave));
+                if (items.length === 0) return;
+
+                // Fila cabecera de sección
+                const headerRow = document.createElement('tr');
+                headerRow.className = `section-header ${claseHeader}`;
+                headerRow.innerHTML = `<td colspan="7">${label} — ${items.length} línea${items.length !== 1 ? 's' : ''}</td>`;
+                tbody.appendChild(headerRow);
+
+                // Filas de datos
+                items.forEach(item => {
+                    const estado    = item.estado       || "N/A";
+                    const ref       = item.referencia   || "Sin Ref";
+                    const desc      = item.descripcion  || "—";
+                    const archivo   = item.nombreArchivo || "—";
+                    const pFactura  = Number(item.precioReal)    || 0;
+                    const pPactado  = Number(item.precioPactado) || 0;
+                    const diff      = Number(item.diferencia)    || 0;
+
+                    const diffColor = diff > 0.005  ? 'text-red-600 font-bold'
+                                    : diff < -0.005 ? 'text-yellow-600 font-bold'
+                                    : 'text-green-600';
+
+                    const tr = document.createElement('tr');
+                    tr.className = "border-b border-slate-50 hover:bg-slate-50 transition";
+                    tr.innerHTML = `
+                        <td class="p-3 whitespace-nowrap"><span class="status-badge ${claseBadge}">${estado}</span></td>
+                        <td class="p-3 font-mono text-xs text-slate-700 whitespace-nowrap">${ref}</td>
+                        <td class="p-3 text-xs text-slate-600">${desc}</td>
+                        <td class="p-3 whitespace-nowrap">
+                            <span class="filename-badge" title="${archivo}">${archivo}</span>
+                        </td>
+                        <td class="p-3 font-mono font-bold text-slate-900 text-right whitespace-nowrap">${fmt(pFactura)}€</td>
+                        <td class="p-3 font-mono text-slate-500 text-right whitespace-nowrap">${pPactado > 0 ? fmt(pPactado) + '€' : '—'}</td>
+                        <td class="p-3 text-right whitespace-nowrap ${diffColor}">
+                            ${diff !== 0 ? (diff > 0 ? '+' : '') + fmt(diff) + '€' : '—'}
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            });
+        }
+
+        // --- LIMPIAR ---
+        function clearResults() {
+            document.getElementById('resultsTable').innerHTML =
+                '<tr><td colspan="7" class="p-10 text-center text-slate-400 italic">Datos limpiados.</td></tr>';
+            document.getElementById('resumenBox').classList.add('hidden');
+            document.getElementById('filtrosBox').classList.add('hidden');
+            todosLosDatos = [];
+            facturasInput.value = "";
+            fileList.classList.add('hidden');
+            dropZoneContent.classList.remove('hidden');
+        }
+    </script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js');
+        }
+    </script>
+</body>
+</html>
