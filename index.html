@@ -17,9 +17,7 @@
         .bg-sobrecoste { background-color: #fee2e2; color: #991b1b; }
         .bg-ok { background-color: #dcfce7; color: #166534; }
         .bg-ahorro { background-color: #fef9c3; color: #854d0e; }
-        .bg-nolista { background-color: #f1f5f9; color: #475569; }
 
-        /* Cabeceras de sección en la tabla */
         .section-header td {
             font-size: 0.7rem;
             font-weight: 800;
@@ -31,7 +29,6 @@
         .section-sobrecoste td { background-color: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
         .section-correcto   td { background-color: #f0fdf4; color: #15803d; border-color: #86efac; }
         .section-ahorro     td { background-color: #fefce8; color: #a16207; border-color: #fde047; }
-        .section-nolista    td { background-color: #f8fafc; color: #475569; border-color: #cbd5e1; }
 
         .filename-badge {
             display: inline-block;
@@ -122,10 +119,6 @@
                             <span class="text-yellow-600">🟡 Ahorros</span>
                             <span id="resAhorros" class="font-bold text-yellow-600">0</span>
                         </div>
-                        <div class="flex justify-between">
-                            <span class="text-slate-500">⚪ No en presupuesto</span>
-                            <span id="resNoLista" class="font-bold text-slate-500">0</span>
-                        </div>
                         <div class="border-t pt-2 mt-2 flex justify-between">
                             <span class="text-red-500">Sobrecoste acumulado</span>
                             <span id="resDifTotal" class="font-bold text-red-500">+0,000€</span>
@@ -145,7 +138,6 @@
                     <button onclick="filtrar('SOBRECOSTE', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700 hover:bg-red-200">🔴 Sobrecostes</button>
                     <button onclick="filtrar('CORRECTO', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-green-100 text-green-700 hover:bg-green-200">🟢 Correctos</button>
                     <button onclick="filtrar('AHORRO', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-yellow-100 text-yellow-700 hover:bg-yellow-200">🟡 Ahorros</button>
-                    <button onclick="filtrar('NO EN', event)" class="filtro-btn px-3 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200">⚪ No en presupuesto</button>
                 </div>
 
                 <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -153,7 +145,8 @@
                         <h2 class="font-bold">Resultados del Análisis</h2>
                         <div class="space-x-2">
                             <button onclick="clearResults()" class="text-xs text-slate-500 hover:text-red-500">Limpiar</button>
-                            <button onclick="window.print()" class="text-sm text-blue-600 font-semibold hover:underline">Imprimir PDF</button>
+                            <button onclick="imprimirSobrecostes()" class="text-sm text-blue-600 font-semibold hover:underline">Imprimir PDF</button>
+                            <button id="btnDescargar" class="text-sm text-green-600 font-semibold hover:underline">Descargar PDF</button>
                         </div>
                     </div>
                     <div class="overflow-x-auto">
@@ -183,6 +176,10 @@
         </div>
     </div>
 
+    <!-- jsPDF y html2canvas al final del body para garantizar que cargan -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
     <script>
         function fmt(n) {
             if (n === null || n === undefined) return '—';
@@ -192,6 +189,9 @@
         const API_BASE = "http://localhost:8080/api/v1/auditor";
         let presupuestoCargado = false;
         let todosLosDatos = [];
+
+        // Enlazar botón descargar aquí, dentro del script, no con onclick en el HTML
+        document.getElementById('btnDescargar').addEventListener('click', descargarPDF);
 
         // --- PRESUPUESTO ---
         document.getElementById('presupuestoInput').addEventListener('change', async (e) => {
@@ -284,9 +284,9 @@
                 const response = await fetch(`${API_BASE}/auditar-facturas`, { method: 'POST', body: formData });
                 if (!response.ok) throw new Error("Error en servidor");
                 const data = await response.json();
-                todosLosDatos = data;
-                renderResults(data);
-                renderResumen(data);
+                todosLosDatos = data.filter(i => !i.estado.includes('NO EN'));
+                renderResults(todosLosDatos);
+                renderResumen(todosLosDatos);
                 document.getElementById('filtrosBox').classList.remove('hidden');
             } catch (err) {
                 errorMsg.textContent = "Error: El servidor no devolvió datos válidos.";
@@ -314,7 +314,6 @@
             document.getElementById('resCorrectos').textContent   = data.filter(i => i.estado.includes('CORRECTO')).length;
             document.getElementById('resSobrecostes').textContent = data.filter(i => i.estado.includes('SOBRECOSTE')).length;
             document.getElementById('resAhorros').textContent     = data.filter(i => i.estado.includes('AHORRO')).length;
-            document.getElementById('resNoLista').textContent     = data.filter(i => i.estado.includes('NO EN')).length;
 
             const difTotal = data
                 .filter(i => i.estado.includes('SOBRECOSTE'))
@@ -337,33 +336,29 @@
                 return;
             }
 
-            // Orden de secciones y su configuración visual
             const secciones = [
-                { clave: 'SOBRECOSTE', label: '🔴 Sobrecostes',        claseHeader: 'section-sobrecoste', claseBadge: 'bg-sobrecoste' },
-                { clave: 'CORRECTO',   label: '🟢 Correctos',          claseHeader: 'section-correcto',   claseBadge: 'bg-ok'         },
-                { clave: 'AHORRO',     label: '🟡 Ahorros',            claseHeader: 'section-ahorro',     claseBadge: 'bg-ahorro'     },
-                { clave: 'NO EN',      label: '⚪ No en presupuesto',  claseHeader: 'section-nolista',    claseBadge: 'bg-nolista'    },
+                { clave: 'SOBRECOSTE', label: '🔴 Sobrecostes', claseHeader: 'section-sobrecoste', claseBadge: 'bg-sobrecoste' },
+                { clave: 'CORRECTO',   label: '🟢 Correctos',   claseHeader: 'section-correcto',   claseBadge: 'bg-ok'         },
+                { clave: 'AHORRO',     label: '🟡 Ahorros',     claseHeader: 'section-ahorro',     claseBadge: 'bg-ahorro'     },
             ];
 
             secciones.forEach(({ clave, label, claseHeader, claseBadge }) => {
                 const items = data.filter(i => i.estado && i.estado.includes(clave));
                 if (items.length === 0) return;
 
-                // Fila cabecera de sección
                 const headerRow = document.createElement('tr');
                 headerRow.className = `section-header ${claseHeader}`;
                 headerRow.innerHTML = `<td colspan="7">${label} — ${items.length} línea${items.length !== 1 ? 's' : ''}</td>`;
                 tbody.appendChild(headerRow);
 
-                // Filas de datos
                 items.forEach(item => {
-                    const estado    = item.estado       || "N/A";
-                    const ref       = item.referencia   || "Sin Ref";
-                    const desc      = item.descripcion  || "—";
-                    const archivo   = item.nombreArchivo || "—";
-                    const pFactura  = Number(item.precioReal)    || 0;
-                    const pPactado  = Number(item.precioPactado) || 0;
-                    const diff      = Number(item.diferencia)    || 0;
+                    const estado   = item.estado       || "N/A";
+                    const ref      = item.referencia   || "Sin Ref";
+                    const desc     = item.descripcion  || "—";
+                    const archivo  = item.nombreArchivo || "—";
+                    const pFactura = Number(item.precioReal)    || 0;
+                    const pPactado = Number(item.precioPactado) || 0;
+                    const diff     = Number(item.diferencia)    || 0;
 
                     const diffColor = diff > 0.005  ? 'text-red-600 font-bold'
                                     : diff < -0.005 ? 'text-yellow-600 font-bold'
@@ -400,6 +395,71 @@
             fileList.classList.add('hidden');
             dropZoneContent.classList.remove('hidden');
         }
+
+        // --- IMPRIMIR SOBRECOSTES ---
+        function imprimirSobrecostes() {
+            const datosOriginales = todosLosDatos;
+            const solocostes = todosLosDatos.filter(i => i.estado.includes('SOBRECOSTE'));
+            renderResults(solocostes);
+            renderResumen(solocostes);
+            window.print();
+            renderResults(datosOriginales);
+            renderResumen(datosOriginales);
+        }
+
+        // --- DESCARGAR PDF ---
+        async function descargarPDF() {
+            const btn = document.getElementById('btnDescargar');
+            btn.textContent = 'Generando...';
+            btn.disabled = true;
+
+            const datosOriginales = todosLosDatos;
+            const solocostes = todosLosDatos.filter(i => i.estado.includes('SOBRECOSTE'));
+            renderResults(solocostes);
+            renderResumen(solocostes);
+
+            document.querySelectorAll('.no-print').forEach(el => el.style.display = 'none');
+
+            try {
+                const { jsPDF } = window.jspdf;
+                const elemento = document.querySelector('.max-w-7xl');
+
+                const canvas = await html2canvas(elemento, {
+                    scale: 2,
+                    useCORS: true,
+                    backgroundColor: '#f8fafc'
+                });
+
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new jsPDF('l', 'mm', 'a4');
+                const pdfW = pdf.internal.pageSize.getWidth();
+                const pdfH = (canvas.height * pdfW) / canvas.width;
+                const pageH = pdf.internal.pageSize.getHeight();
+
+                if (pdfH <= pageH) {
+                    pdf.addImage(imgData, 'PNG', 0, 0, pdfW, pdfH);
+                } else {
+                    let posY = 0;
+                    while (posY < pdfH) {
+                        pdf.addImage(imgData, 'PNG', 0, -posY, pdfW, pdfH);
+                        posY += pageH;
+                        if (posY < pdfH) pdf.addPage();
+                    }
+                }
+
+                pdf.save('sobrecostes_auditoria.pdf');
+
+            } catch (err) {
+                alert('Error generando PDF: ' + err.message);
+            } finally {
+                document.querySelectorAll('.no-print').forEach(el => el.style.display = '');
+                renderResults(datosOriginales);
+                renderResumen(datosOriginales);
+                btn.textContent = 'Descargar PDF';
+                btn.disabled = false;
+            }
+        }
+
     </script>
     <script>
         if ('serviceWorker' in navigator) {
